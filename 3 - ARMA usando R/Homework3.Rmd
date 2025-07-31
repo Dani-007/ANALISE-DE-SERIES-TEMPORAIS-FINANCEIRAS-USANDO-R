@@ -1,0 +1,239 @@
+---
+title: "Homework3"
+author: 'Daniel de Souza Sobrinho Macedo RA: 813524'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Inicialização das bibliotecas
+```{r,message=FALSE, warning=FALSE}
+#install.packages("lmtest")
+
+library(BatchGetSymbols)
+library(tidyverse)
+library(ggthemes) 
+library(FinTS)
+library(WriteXLS)
+library(xtable)
+library(tbl2xts)
+library(forecast)
+library(tseries)
+library(timeSeries)
+```
+
+## Análise inicial dos dados:
+### Coleta e preparação dos dados do IBOVESPA desde 01/01/2021:
+```{r, message=FALSE, warning=FALSE}
+dados_ibov <- BatchGetSymbols("^BVSP",
+                              first.date = '2021-01-01',
+                              last.date = Sys.time(),
+                              type.return = "log",
+                              freq.data = "daily")[[2]]
+
+serie_retornos <- dados_ibov %>%
+  select(ref.date, ticker, ret.closing.prices) %>%
+  select(ret.closing.prices) %>%
+  slice(-1)
+
+serie_retornos <- as.ts(serie_retornos)
+```
+
+#### Evolução dos preços da Ibovespa:
+
+```{r}
+grafico_precos <- ggplot(dados_ibov, aes(ref.date, price.close)) +
+  geom_line(color = '#CC0000') +
+  labs(x = "", y = 'Fechamento (R$)', title = "Variação diária do IBOV",
+       subtitle = "Período: 27/10/2021 a 24/05/2024", caption = "Fonte: B3") +
+  theme_economist()
+grafico_precos
+```
+
+#### Variação percentual diária
+
+```{r,warning=FALSE}
+grafico_retornos <- ggplot(dados_ibov, aes(ref.date, ret.closing.prices)) +
+  geom_line(color = '#CC0000') +
+  labs(x = "", y = 'Retornos (%)', title = "Flutuações diárias do IBOV",
+       subtitle = "Período: 27/10/2021 a 24/05/2024", caption = "Fonte: B3") +
+  theme_economist()
+grafico_retornos
+```
+
+## Indentificação de modelos:
+### Utilizando auto.arima para sugestão automática de modelo
+```{r}
+auto.arima(serie_retornos)
+```
+### Análise de autocorrelação (FAC)
+```{r}
+acf(serie_retornos, lag.max = 10)
+```
+
+### Análise parcial de autocorrelação (FACP)
+```{r}
+pacf(serie_retornos, lag.max = 36)
+```
+
+### Verificação via AIC e BIC (modelo ARMA)
+
+```{r}
+melhor_aic <- Inf
+melhor_bic <- Inf
+melhor_arma_aic <- c(0, 0)
+melhor_arma_bic <- c(0, 0)
+
+for (p in 0:5) {
+  for (q in 0:5) {
+    tryCatch({
+      modelo_temp <- Arima(serie_retornos, order = c(p, 0, q))
+      if (AIC(modelo_temp) < melhor_aic) {
+        melhor_aic <- AIC(modelo_temp)
+        melhor_arma_aic <- c(p, 0, q)
+      }
+      if (BIC(modelo_temp) < melhor_bic) {
+        melhor_bic <- BIC(modelo_temp)
+        melhor_arma_bic <- c(p, 0, q)
+      }
+    }, error = function(e) NULL)
+  }
+}
+
+cat("Modelo ótimo segundo AIC: ", melhor_arma_aic, "\n")
+cat("Modelo ótimo segundo BIC: ", melhor_arma_bic, "\n")
+```
+### Modelo AR(1) e diagnóstico dos resíduos
+```{r}
+modelo_ar1 <- arima(serie_retornos, order = c(1, 0, 0))
+```
+
+### Testes do Box-Pierce e Ljung-Box 
+```{r}
+tsdiag(modelo_ar1)
+Box.test(modelo_ar1$residuals, lag = 1)
+Box.test(residuals(modelo_ar1), type = "Ljung")
+```
+### O gráfico dos resíduos e das FAC e FACP dos resíduos
+```{r}
+plot.ts(modelo_ar1$residuals, main = "Resíduos do AR(1)")
+acf(residuals(modelo_ar1))
+pacf(residuals(modelo_ar1))
+```
+### Nota-se que os resíduos não apresentam um comportamento típico de ruído branco, parecendo-se mais com a própria série temporal. Dessa forma, podemos concluir que os modelos ARMA não são suficientemente precisos para representar séries temporais financeiras
+
+### Previsões futuras com AR(1) dos próximos 5 tempos:
+```{r}
+prev <- forecast(modelo_ar1, h = 5)
+prev
+plot(prev)
+```
+
+
+
+## Modelos para as ações da GetSP500Stocks
+### Coleta dos tickers
+```{r}
+df_empresas <- GetSP500Stocks()
+lista_tickers <- head(df_empresas %>% select(Tickers) %>% slice(-1), 50)
+```
+
+### Obtivemos as informações de cada ticker e inserimos como uma linha no nosso data.frame. Nesse data.frame, a primeira coluna corresponde ao nome da empresa e a segunda traz a série temporal dos retornos associados a ela.
+```{r, message=FALSE, warning=FALSE}
+dados_acoes <- data.frame()
+
+for (ticker in lista_tickers$Tickers) {
+  tmp <- BatchGetSymbols(ticker,
+                         first.date = '2019-01-01',
+                         last.date = Sys.time(),
+                         type.return = "log",
+                         freq.data = "daily")[[2]]
+  if (nrow(tmp) > 0) {
+    dados_acoes <- rbind(dados_acoes, data.frame(
+      "Empresa" = ticker,
+      "Serie" = I(list(na.omit(as.ts(tmp$ret.closing.prices))))
+    ))
+  }
+}
+head(dados_acoes, 5)
+```
+### Com base na série temporal, podemos utilizar a função auto.arima para identificar o modelo mais adequado para cada uma delas.
+```{r}
+modelos <- c()
+
+for (i in 1:nrow(dados_acoes)) {
+  modelo_i <- auto.arima(dados_acoes$Serie[[i]])
+  modelo_i$series <- dados_acoes$Empresa[[i]]
+  modelos <- c(modelos, I(list(modelo_i)))
+}
+dados_acoes$Modelo <- modelos
+```
+
+### Por fim, o modelo obtido anteriormente pode ser utilizado para estimar o valor no tempo t+1.
+```{r}
+previsoes_t1 <- c()
+
+for (i in 1:nrow(dados_acoes)) {
+  pred <- predict(dados_acoes$Modelo[[i]], n.ahead = 1)
+  previsoes_t1 <- c(previsoes_t1, pred$pred[1])
+}
+
+dados_acoes$Prev_T1 <- previsoes_t1
+dados_acoes <- dados_acoes[order(-dados_acoes$Prev_T1), ]
+head(data.frame(dados_acoes$Empresa, dados_acoes$Prev_T1), 5)
+```
+### Separação em estimativa e previsão (80/20)
+```{r}
+serie_amostra <- dados_acoes[1, ]
+serie <- serie_amostra$Serie[[1]]
+serie_vetor <- as.vector(serie)
+serie_limpa <- ts(serie_vetor[!sapply(serie_vetor, is.null)])
+
+n_total <- length(serie_limpa)
+n_estimativa <- floor(0.8 * n_total)
+serie_estimativa <- serie_limpa[1:n_estimativa]
+serie_prev <- serie_limpa[(n_estimativa + 1):n_total]
+```
+
+#### Treinamento e avaliação do modelo
+```{r}
+modelo_final <- auto.arima(serie_estimativa)
+previsoes <- forecast(modelo_final, h = length(serie_prev))
+
+resultado <- data.frame(
+  Tempo = time(serie_prev),
+  Observado = as.numeric(serie_prev),
+  Previsto = as.numeric(previsoes$mean),
+  Inferior = as.numeric(previsoes$lower[,2]),
+  Superior = as.numeric(previsoes$upper[,2])
+)
+
+erro <- resultado$Observado - resultado$Previsto
+mae <- mean(abs(erro))
+mse <- mean(erro^2)
+
+head(resultado, 5)
+print(paste("Erro absoluto médio (MAE):", mae))
+print(paste("Erro quadrático médio (MSE):", mse))
+
+# Plotar os resultados
+
+grafico_final <- ggplot(resultado, aes(x = Tempo)) +
+  geom_line(aes(y = Observado), color = "darkblue") +
+  geom_line(aes(y = Previsto), color = "tomato", linetype = "dashed") +
+  geom_ribbon(aes(ymin = Inferior, ymax = Superior), fill = "gray80", alpha = 0.4) +
+  labs(title = "Previsão ARIMA vs Valores Observados",
+       x = "Tempo", y = "Retorno") +
+  theme_minimal()
+
+grafico_final
+
+```
+
+Como podemos ver, as previsões geradas pelo modelo ARIMA não apresentam alta confiabilidade quando aplicadas a séries temporais financeiras
+
+

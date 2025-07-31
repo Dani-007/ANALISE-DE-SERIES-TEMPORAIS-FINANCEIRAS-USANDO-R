@@ -1,0 +1,159 @@
+---
+title: "Projeto1"
+output: html_document
+date: "2025-06-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##ggplot2 e dplyr
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+##Plotando um grafico de disperção
+```{r}
+df_dados <- data.frame(eixo_x = rnorm(100), eixo_y = rnorm(100))
+df_dados
+```
+
+```{r}
+ggplot(data = df_dados, aes(x = eixo_x, y = eixo_y)) +
+  geom_point() +
+  labs(title = "Dispersão Aleatória", x = "Eixo X", y = "Eixo Y")
+```
+##Histograma
+```{r}
+# Criando dados simulados
+df_hist <- data.frame(valores = rnorm(1000))
+
+ggplot(df_hist, aes(x = valores)) +
+  geom_histogram(binwidth = 0.5, fill = "skyblue", color = "black") +
+  labs(title = "Distribuição de Valores", x = "Valores", y = "Frequência")
+```
+##Grafico de linhas
+
+```{r}
+# Série temporal fictícia
+df_tempo <- data.frame(tempo = 1:100, medida = cumsum(rnorm(100)))
+
+ggplot(df_tempo, aes(x = tempo, y = medida)) +
+  geom_line(color = "darkgreen") +
+  labs(title = "Evolução ao Longo do Tempo", x = "Tempo", y = "Medida")
+```
+
+##Barplot stacked
+```{r}
+df_barra <- data.frame(
+  grupo = rep(c("A", "B", "C"), each = 3),
+  categoria = rep(c("X", "Y", "Z"), times = 3),
+  quantidade = c(10, 15, 20, 5, 10, 15, 8, 12, 18)
+)
+
+ggplot(df_barra, aes(x = grupo, y = quantidade, fill = categoria)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Barras Empilhadas", x = "Grupo", y = "Quantidade") +
+  scale_fill_brewer(palette = "Paired")
+
+```
+
+##Com porcentagem:
+```{r}
+df_pct <- data.frame(
+  grupo = rep(c("A", "B", "C"), each = 3),
+  categoria = rep(c("X", "Y", "Z"), times = 3),
+  valor = c(10, 15, 20, 5, 10, 15, 8, 12, 18)
+)
+
+totais <- aggregate(valor ~ grupo, data = df_pct, sum)
+colnames(totais)[2] <- "total"
+
+df_pct <- merge(df_pct, totais, by = "grupo")
+df_pct$porcentagem <- df_pct$valor / df_pct$total * 100
+
+ggplot(df_pct, aes(x = grupo, y = porcentagem, fill = categoria)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Distribuição Percentual por Grupo", x = "Grupo", y = "Porcentagem (%)") +
+  scale_fill_brewer(palette = "Paired") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1))
+```
+
+
+##Função select()
+```{r}
+dados_exemplo <- data.frame(
+  nome = c("Ana", "Bruno", "Carla"),
+  idade = c(23, 35, 29),
+  cidade = c("São Paulo", "Rio de Janeiro", "Belo Horizonte")
+)
+
+colunas_selecionadas <- dados_exemplo %>% select(nome, cidade)
+
+print(colunas_selecionadas)
+```
+
+##Função filter()
+```{r}
+maiores_de_25 <- dados_exemplo %>% filter(idade > 25)
+
+print(maiores_de_25)
+```
+
+##Função mutate()
+```{r}
+dados_modificados <- dados_exemplo %>% mutate(idade_futura = idade + 10)
+
+print(dados_modificados)
+```
+
+
+##Funções summarize() e group_by()
+```{r}
+df_grupos <- data.frame(
+  grupo = c("A", "A", "B", "B"),
+  valor = c(10, 15, 20, 25)
+)
+
+resumo_por_grupo <- df_grupos %>%
+  group_by(grupo) %>%
+  summarize(media = mean(valor))
+
+print(resumo_por_grupo)
+```
+
+##Função arrange()
+```{r}
+# Crescente
+ordenado_crescente <- dados_exemplo %>% arrange(idade)
+print(ordenado_crescente)
+
+# Decrescente
+ordenado_decrescente <- dados_exemplo %>% arrange(desc(idade))
+print(ordenado_decrescente)
+```
+
+##Função rename()
+```{r}
+dados_renomeados <- dados_exemplo %>% rename(nome_completo = nome)
+
+print(dados_renomeados)
+```
+
+##Função join()
+```{r}
+tabela1 <- data.frame(
+  id = c(1, 2, 3),
+  nome = c("Ana", "Bruno", "Carla")
+)
+
+tabela2 <- data.frame(
+  id = c(1, 2, 4),
+  idade = c(23, 35, 40)
+)
+
+resultado_join <- tabela1 %>% inner_join(tabela2, by = "id")
+
+print(resultado_join)
+```

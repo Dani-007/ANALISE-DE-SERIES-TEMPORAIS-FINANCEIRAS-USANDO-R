@@ -1,0 +1,183 @@
+---
+title: "Homework5"
+author: "Daniel de Souza Sobrinho Macedo RA:813524"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Inicialização das bibliotecas
+```{r,message=FALSE, warning=FALSE}
+#install.packages("quantmod")
+#install.packages("rugarch")
+
+library(quantmod)
+library(BatchGetSymbols)
+library(tidyverse)
+library(ggthemes) 
+library(rugarch)
+library(FinTS)
+library(forecast)
+library(ggplot2)
+
+```
+
+##Coleta e tratamento dos dados da VALE3
+### Recuperando retornos logarítmicos diários desde 2014
+```{r, message=FALSE, warning=FALSE}
+dados_ativos <- BatchGetSymbols('VALE3.SA',
+                                first.date = '2014-01-01',
+                                last.date = Sys.Date(),
+                                type.return = "log",
+                                freq.data = "daily")[[2]]
+
+serie_vale <- dados_ativos %>%
+  select(ret.closing.prices) %>%
+  slice(-1) %>%
+  pull() %>%
+  ts()
+
+```
+
+### Verificação da presença de heterocedasticidade condicional
+```{r, warning=FALSE}
+ArchTest(serie_vale, lags = 10, demean = TRUE)
+```
+
+## Ajustando os modelos GARCH, EGARCH e GJR-GARCH
+### Função de ajuste parametrizado
+```{r}
+ajustar_modelo <- function(tipo_modelo, dados, dist) {
+  especificacao <- ugarchspec(
+    variance.model = list(model = tipo_modelo, garchOrder = c(1, 1)),
+    mean.model = list(armaOrder = c(0, 0), include.mean = FALSE),
+    distribution.model = dist
+  )
+  ugarchfit(spec = especificacao, data = dados)
+}
+
+# Ajustes dos diferentes modelos
+garch_norm <- ajustar_modelo("sGARCH", serie_vale, "norm")
+garch_t    <- ajustar_modelo("sGARCH", serie_vale, "std")
+egarch_norm <- ajustar_modelo("eGARCH", serie_vale, "norm")
+egarch_t    <- ajustar_modelo("eGARCH", serie_vale, "std")
+gjr_norm    <- ajustar_modelo("gjrGARCH", serie_vale, "norm")
+gjr_t       <- ajustar_modelo("gjrGARCH", serie_vale, "std")
+```
+
+## Comparação de desempenho dos modelos
+### Cálculo da persistência e half-life
+```{r}
+avaliar_modelo <- function(nome, modelo_ajustado) {
+  persis <- persistence(modelo_ajustado)
+  hl <- log(0.5) / log(persis)
+  ic <- infocriteria(modelo_ajustado)
+  
+  tibble(
+    Modelo = nome,
+    Persistência = persis,
+    HalfLife = hl,
+    AIC = ic[1],
+    BIC = ic[2],
+    Shibata = ic[3],
+    HQ = ic[4]
+  )
+}
+
+tabela_resultados <- bind_rows(
+  avaliar_modelo("GARCH (Normal)", garch_norm),
+  avaliar_modelo("GARCH (t-Student)", garch_t),
+  avaliar_modelo("EGARCH (Normal)", egarch_norm),
+  avaliar_modelo("EGARCH (t-Student)", egarch_t),
+  avaliar_modelo("GJR (Normal)", gjr_norm),
+  avaliar_modelo("GJR (t-Student)", gjr_t)
+)
+
+tabela_resultados
+```
+
+## Visualização dos resíduos dos modelos ajustados
+### Organizando dados dos resíduos para plotagem
+```{r}
+residuos_df <- data.frame(
+  Tempo = dados_ativos$ref.date[-1],
+  GARCH_N = residuals(garch_norm),
+  GARCH_T = residuals(garch_t),
+  EGARCH_N = residuals(egarch_norm),
+  EGARCH_T = residuals(egarch_t),
+  GJR_N = residuals(gjr_norm),
+  GJR_T = residuals(gjr_t)
+)
+
+plotar_residuos <- function(base, coluna, titulo) {
+  ggplot(base, aes(x = Tempo, y = !!sym(coluna))) +
+    geom_line(color = "#990000", alpha = 0.7) +
+    labs(title = titulo, x = "Data", y = "Resíduos") +
+    theme_classic()
+}
+
+# Criando os gráficos para cada modelo
+library(cowplot)
+
+grid_residuos <- plot_grid(
+  plotar_residuos(residuos_df, "GARCH_N", "Resíduos GARCH - Normal"),
+  plotar_residuos(residuos_df, "GARCH_T", "Resíduos GARCH - t-Student"),
+  plotar_residuos(residuos_df, "EGARCH_N", "Resíduos EGARCH - Normal"),
+  plotar_residuos(residuos_df, "EGARCH_T", "Resíduos EGARCH - t-Student"),
+  plotar_residuos(residuos_df, "GJR_N", "Resíduos GJR - Normal"),
+  plotar_residuos(residuos_df, "GJR_T", "Resíduos GJR - t-Student"),
+  nrow = 2
+)
+
+grid_residuos
+```
+
+#### Observação:
+Podemos verificar visualmente quais modelos apresentam maior estabilidade dos resíduos ao longo do tempo.
+
+## Previsão de volatilidade futura (Forecast)
+### Gerando previsões de 10 passos à frente
+```{r}
+f10_garch_n <- ugarchforecast(garch_norm, n.ahead = 10)
+f10_garch_t <- ugarchforecast(garch_t, n.ahead = 10)
+f10_egarch_n <- ugarchforecast(egarch_norm, n.ahead = 10)
+f10_egarch_t <- ugarchforecast(egarch_t, n.ahead = 10)
+f10_gjr_n <- ugarchforecast(gjr_norm, n.ahead = 10)
+f10_gjr_t <- ugarchforecast(gjr_t, n.ahead = 10)
+```
+
+#### Visualização das volatilidades previstas (sigmas)
+```{r}
+sigmas_df <- tibble(
+  Horizonte = rep(1:10, 6),
+  Sigma = c(
+    sigma(f10_garch_n),
+    sigma(f10_garch_t),
+    sigma(f10_egarch_n),
+    sigma(f10_egarch_t),
+    sigma(f10_gjr_n),
+    sigma(f10_gjr_t)
+  ),
+  Modelo = rep(
+    c("GARCH - Normal", "GARCH - t-Student",
+      "EGARCH - Normal", "EGARCH - t-Student",
+      "GJR - Normal", "GJR - t-Student"),
+    each = 10
+  )
+)
+
+ggplot(sigmas_df, aes(x = Horizonte, y = Sigma, color = Modelo)) +
+  geom_line(size = 1.2) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(title = "Volatilidade Prevista (σ) para os Modelos",
+       x = "Passos à Frente",
+       y = "Sigma (Volatilidade Estimada)",
+       color = "Modelo") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+```

@@ -1,0 +1,157 @@
+---
+title: "Modelos ARMA - R"
+author: "Andreza Palma"
+output: html_document
+---
+
+Lembre-se de instalar os pacotes que você ainda não instalou antes de carregar. 
+
+```{r}
+library(BatchGetSymbols) ### pegar dados yahoo finance (preços diárias ativos negociados em bolsa)
+library(tidyverse)
+library(ggthemes) 
+library(FinTS)
+library(WriteXLS)
+library(xtable)
+library(tbl2xts)
+library(forecast)
+library(tseries)
+library(timeSeries)
+```
+
+Vamos usar a série de retornos diários do IBOVESPA desde 01/01/2021:
+
+```{r}
+#ticker IBOVESPA
+tickers<-c("^BVSP")
+
+ibov<- BatchGetSymbols(tickers,
+                                 first.date = '2014-10-27',
+                                 last.date = Sys.time(),
+                                 type.return = "log",
+                                 freq.data = "daily")
+
+ibov <- ibov[[2]]
+```
+
+Vamos selecionar os retornos diários da série do IBOVESPA e separar as datas da série de retornos, além de declarar a variável como série temporal. 
+
+```{r}
+daily_returns <- ibov %>% 
+  select(ref.date,ret.closing.prices)
+
+date <- daily_returns %>%
+  select(ref.date) %>% 
+  rename(date = ref.date) %>% 
+  slice(-1)
+
+daily_returns <- daily_returns %>%
+  select(ret.closing.prices) %>% 
+  slice(-1)
+
+## declarando como série temporal através do comando as.ts
+daily_returns=as.ts(daily_returns)
+head(daily_returns)
+```
+```{r}
+k <-auto.arima(daily_returns)
+k
+k$coef
+```
+
+**IDENTIFICAÇÃO DO MODELO**
+
+FAC e FACP
+
+Para ter uma ideia do modelo a ser estimado, usamos as FAC e FACP, como visto em aula. Podemos estipular o número máximo de defasagens a ser incluído através de lag.max. 
+
+```{r}
+acf(daily_returns, lag.max=36) 
+pacf(daily_returns, lag.max=36) 
+
+
+```
+
+É possível usar também tsdisplay:
+
+```{r}
+tsdisplay(daily_returns)
+```
+
+
+**Estimação do modelo ARMA**
+
+Vamos tentar primeiro um modelo AR(1). O comando arima faz a estimação do modelo. É preciso inserir a base de dados e a ordem ARIMA desejada. No caso de um AR(1), temos um ARIMA(1,0,0). Sempre que a série for estacionária, a ordem I é zero, pois a variável é integrada de ordem zero (ou seja, estacionária).
+
+```{r}
+y=arima(daily_returns,order=c(5,0,5))
+x=arima(daily_returns,order=c(2,0,2))
+```
+
+**Diagnóstico do modelo**
+Após estimar o modelo, é preciso verificar se o mesmo é adequado através da análise dos resíduos, que devem ter o comportamento de ruído branco. Podemos ver isso através da estatística Q (teste de Box-Pierce e Ljung-Box), das FAC e FACP e da análise visual do gráfico dos resíduos. 
+
+```{r}
+tsdiag(x)
+Box.test(x$residuals,lag=1) 
+Box.test(residuals(x),  type="Ljung")
+acf(residuals(x))
+pacf(residuals(x))
+
+```
+```{r}
+tsdiag(y)
+Box.test(y$residuals,lag=1) 
+Box.test(residuals(y),  type="Ljung")
+acf(residuals(y))
+pacf(residuals(y))
+```
+
+Gráfico dos resíduos
+
+```{r}
+plot.ts(x$residuals)
+plot.ts(y$residuals)
+```
+
+
+
+
+**Previsão**
+```{r}
+forecast<-predict(x,n.ahead=1, se.fit=T) 
+#(4 passos a frente)
+#Com desvio-padrão
+#predict(x, n.ahead = 15, se.fit=T)
+forecast$pred
+
+
+```
+
+Formas alternativas
+
+```{r}
+forecast(x, 5)
+plot(forecast(x, 5))
+
+```
+
+Valores ajustados x observados
+
+Para ter uma idéia do ajuste do modelo, plotamos a série observada com a série estimada:
+
+```{r}
+plot(daily_returns, col="red")
+lines(fitted(x),col="blue")
+
+
+```
+
+**FUNÇÃO AUTOARIMA**
+
+Escolhe a "melhor" configuração do modelo 
+
+```{r}
+auto.arima(daily_returns)
+
+```

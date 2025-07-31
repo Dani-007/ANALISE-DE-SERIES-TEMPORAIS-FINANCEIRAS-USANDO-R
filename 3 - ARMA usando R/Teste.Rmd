@@ -1,0 +1,101 @@
+---
+title: "Teste"
+author: "Rafael Banin Ferraz de Camargo"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Inicialização das bibliotecas
+```{r,message=FALSE, warning=FALSE}
+#install.packages("lmtest")
+
+library(BatchGetSymbols)
+library(tidyverse)
+library(ggthemes) 
+library(FinTS)
+library(WriteXLS)
+library(xtable)
+library(tbl2xts)
+library(forecast)
+library(tseries)
+library(timeSeries)
+```
+
+## Análise inicial dos dados:
+### Inicialização dos dados de preço e retorno diário da IBOVESPA desde 01/01/2021:
+```{r, message=FALSE, warning=FALSE}
+ibovespa<- BatchGetSymbols("^BVSP",
+                           first.date = '2021-01-01',
+                           last.date = Sys.time(),
+                           type.return = "log",
+                           freq.data = "daily")
+ibovespa <- ibovespa[[2]]
+
+retorno_diario <- ibovespa %>% 
+  select(ref.date,ticker,ret.closing.prices) 
+
+retorno_diario <- retorno_diario %>%
+  select(ret.closing.prices) %>% 
+  slice(-1)
+
+retorno_diario=as.ts(retorno_diario)
+```
+
+## Indentificação do modelo:
+### A partir da série acima, podemos usar a função auto.arima para achar o melhor modelo
+```{r}
+auto.arima(retorno_diario)
+```
+### Os gráficos FAC:
+```{r}
+acf(retorno_diario, lag.max=10) 
+
+```
+
+### Os gráficos FACP:
+```{r}
+pacf(retorno_diario,lag.max=36)
+
+```
+
+### Teste para achar o melhor modelo a apartir do AIC e BIc
+```{r}
+# Definir os possíveis valores de p e q
+max_p <- 5
+max_q <- 5
+
+# Inicializar variáveis para armazenar os melhores resultados
+best_aic <- Inf
+best_bic <- Inf
+best_order_aic <- c(0, 0)
+best_order_bic <- c(0, 0)
+
+# Loop para testar todas as combinações de p e q
+for(p in 0:max_p) {
+  for(q in 0:max_q) {
+    tryCatch({
+      modelo <- Arima(retorno_diario, order = c(p, 0, q))
+      aic <- AIC(modelo)
+      bic <- BIC(modelo)
+      
+      if(aic < best_aic) {
+        best_aic <- aic
+        best_order_aic <- c(p, 0, q)
+      }
+      
+      if(bic < best_bic) {
+        best_bic <- bic
+        best_order_bic <- c(p, 0, q)
+      }
+    }, error = function(e) {NULL})
+  }
+}
+
+# Exibir os melhores modelos
+cat("Melhor modelo ARMA baseado em AIC: (p, d, q) =", best_order_aic, "\n")
+cat("Melhor modelo ARMA baseado em BIC: (p, d, q) =", best_order_bic, "\n")
+
+```

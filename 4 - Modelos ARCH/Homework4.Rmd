@@ -1,0 +1,254 @@
+---
+title: "Homework 4"
+author: "Daniel de Souza Sobrinho Macedo RA:813524"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Inicialização das bibliotecas
+```{r,message=FALSE, warning=FALSE}
+#install.packages("quantmod")
+#install.packages("rugarch")
+
+library(quantmod)
+library(BatchGetSymbols)
+library(tidyverse)
+library(ggthemes) 
+library(rugarch)
+library(FinTS)
+
+```
+## Exercício 1
+---
+
+### (a) Por que os parâmetros \(\varpi\) e \(\alpha\) são restritos a serem positivos ou não negativos?
+
+Os parâmetros \(\varpi\) e \(\alpha\) determinam a variância condicional \(\sigma_t^2\) do modelo. Como a variância precisa ser sempre positiva:
+
+- \(\varpi > 0\): garante que mesmo quando o termo \(\epsilon_{t-1}^2 = 0\), a variância condicional \(\sigma_t^2\) continua sendo positiva.
+- \(\alpha \ge 0\): impede que a variância seja reduzida por valores negativos, o que poderia gerar uma variância negativa, algo não admissível.
+
+---
+
+### (b) Como o modelo permite a formação de clusters de volatilidade?
+
+O modelo ARCH(1) define a variância condicional \(\sigma_t^2\) como dependente de \(\epsilon_{t-1}^2\), o erro ao quadrado do período anterior. Assim:
+
+- Quando ocorrem choques grandes (valores altos de \(\epsilon_{t-1}^2\)), a variância condicional aumenta.
+- Isso gera períodos contínuos de alta ou baixa volatilidade, um comportamento conhecido como **clusters de volatilidade**, que é comumente observado em séries financeiras.
+
+---
+
+### (c) Dois fatos estilizados que **não são capturados** pelo modelo ARCH(1):
+
+1. **Assimetria (efeito leverage):** choques negativos costumam aumentar mais a volatilidade do que choques positivos de mesma magnitude. O modelo ARCH, por depender apenas de \(\epsilon_t^2\), não diferencia entre choques positivos e negativos.
+
+2. **Persistência de longo prazo:** o ARCH(1) considera apenas um termo defasado. Séries reais frequentemente apresentam persistência por vários períodos, exigindo modelos mais complexos como GARCH ou FIGARCH para capturar esse comportamento.
+
+---
+
+### (d) Diferença entre variância condicional e incondicional:
+
+- **Variância condicional** é a variância de \(r_t\) dado o passado da série. No modelo ARCH(1), é dada por:
+  \[
+  \text{Var}(r_t | \mathcal{I}_{t-1}) = \sigma_t^2 = \varpi + \alpha \epsilon_{t-1}^2
+  \]
+  Ela varia com o tempo conforme os choques passados.
+
+- **Variância incondicional** é a variância de \(r_t\) ao longo do tempo, sem considerar a informação passada. Se \(\alpha < 1\), ela pode ser calculada como:
+  \[
+  \text{Var}(r_t) = \frac{\varpi}{1 - \alpha}
+  \]
+
+
+## Exercício 2
+---
+
+### Utilização das FAC e FACP em modelos ARCH
+
+- **FAC (Função de Autocorrelação)**: mede a correlação linear entre os valores da série original em diferentes defasagens. Em séries financeiras, a FAC dos retornos costuma indicar **baixa autocorrelação**, mas isso não significa ausência de dependência na variância.
+
+- **FACP (Função de Autocorrelação dos Quadrados dos Resíduos)**: avalia a autocorrelação dos **retornos ao quadrado**, ou seja, da variância. É especialmente útil porque séries ARCH apresentam **dependência na variância**, mesmo quando os retornos não são autocorrelacionados.
+
+---
+
+### Etapas onde FAC e FACP são úteis
+
+1. **Identificação de heterocedasticidade**:
+   - Antes de ajustar um modelo ARCH, verifica-se a presença de autocorrelação nos **retornos ao quadrado**.
+   - Se a FACP mostra autocorrelação significativa, isso indica **heterocedasticidade condicional**, justificando o uso de um modelo ARCH.
+
+2. **Diagnóstico após ajuste do modelo**:
+   - Após estimar o modelo ARCH, calcula-se a FACP dos **resíduos padronizados ao quadrado**.
+   - Se não houver autocorrelação significativa restante, isso indica que o modelo ajustado capturou bem a estrutura de volatilidade da série.
+
+---
+
+### Resumo
+
+FAC e FACP são ferramentas diagnósticas essenciais:
+
+- A **FAC** ajuda a avaliar a estrutura dos retornos (usada para verificar estacionariedade).
+- A **FACP** ajuda a detectar e validar a presença de efeitos ARCH, sendo central para:
+  - Confirmar a necessidade de modelos ARCH;
+  - Avaliar a qualidade do ajuste do modelo.
+
+---
+
+
+## Exercício 3:
+### Iniciamos com a obtenção dos dados de preços e retornos diários da Petrobras e do IBOVESPA desde o dia 01/01/2019:
+
+```{r, message=FALSE, warning=FALSE}
+ativos <- c('PETR4.SA','^BVSP')
+
+dados <- BatchGetSymbols(tickers = ativos,
+                         first.date = '2019-01-01',
+                         last.date = Sys.Date(),
+                         type.return = "log",
+                         freq.data = "daily")[[2]]
+
+# Separando os dados dos ativos
+serie_ibov <- dados %>% filter(ticker == '^BVSP') %>% 
+  pull(ret.closing.prices) %>% 
+  na.omit() %>% 
+  ts()
+
+serie_petroleira <- dados %>% filter(ticker == 'PETR4.SA') %>% 
+  pull(ret.closing.prices) %>% 
+  na.omit() %>% 
+  ts()
+```
+
+### Vamos começar com a Petrobras
+#### Começamos fazendo o teste para a heterocedasticidade condicional
+```{r, warning=FALSE}
+ArchTest(serie_petroleira, lags = 10, demean = TRUE)
+```
+Podemos observar que existe uma heterocedasticidade condicional
+
+### Ajustando modelos de volatilidade para PETROBRAS
+#### Modelo GARCH(1,1)
+```{r}
+spec_garch_petro <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(0, 0)),
+  distribution.model = "norm"
+)
+ajuste_garch_petro <- ugarchfit(spec = spec_garch_petro, data = serie_petroleira)
+ajuste_garch_petro
+```
+
+#### Modelo EGARCH(1,1)
+```{r}
+spec_egarch_petro <- ugarchspec(
+  variance.model = list(model = "eGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(0, 0)),
+  distribution.model = "norm"
+)
+ajuste_egarch_petro <- ugarchfit(spec = spec_egarch_petro, data = serie_petroleira)
+ajuste_egarch_petro
+```
+
+#### Modelo GJR-GARCH(1,1)
+```{r}
+spec_gjr_petro <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(0, 0)),
+  distribution.model = "norm"
+)
+ajuste_gjr_petro <- ugarchfit(spec = spec_gjr_petro, data = serie_petroleira)
+ajuste_gjr_petro
+```
+
+
+### Agora vamos aplicar nos dados da IBOVESPA
+#### Verificando heterocedasticidade condicional - IBOVESPA
+```{r, warning=FALSE}
+ArchTest(serie_ibov, lags = 10, demean = TRUE)
+```
+### Ajustando modelos de volatilidade para IBOVESPA
+#### Modelo GARCH(1,1)
+```{r}
+spec_garch_ibov <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(0, 0)),
+  distribution.model = "std"
+)
+ajuste_garch_ibov <- ugarchfit(spec = spec_garch_ibov, data = serie_ibov)
+ajuste_garch_ibov
+```
+
+#### Modelo EGARCH(1,1)
+```{r}
+spec_egarch_ibov <- ugarchspec(
+  variance.model = list(model = "eGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(0, 0)),
+  distribution.model = "std"
+)
+ajuste_egarch_ibov <- ugarchfit(spec = spec_egarch_ibov, data = serie_ibov)
+ajuste_egarch_ibov
+```
+
+#### Modelo GJR-GARCH(1,1)
+```{r}
+spec_gjr_ibov <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(0, 0)),
+  distribution.model = "std"
+)
+ajuste_gjr_ibov <- ugarchfit(spec = spec_gjr_ibov, data = serie_ibov)
+ajuste_gjr_ibov
+```
+
+
+## Exercício 4
+### Criando uma função para calcular persistência e tempo de meia-vida (half-life)
+```{r}
+calcular_persistencia <- function(modelo_garch, modelo_egarch, modelo_gjr) {
+
+  half_life <- function(persistencia) {
+    log(0.5) / log(persistencia)
+  }
+
+  persistencias <- c(
+    persistence(modelo_garch),
+    persistence(modelo_egarch),
+    persistence(modelo_gjr)
+  )
+
+  half_lifes <- sapply(persistencias, half_life)
+
+  tibble(
+    Modelo = c("GARCH", "EGARCH", "GJR-GARCH"),
+    Persistência = round(persistencias, 4),
+    Half_Life = round(half_lifes, 2)
+  )
+}
+```
+
+### Aplicando a função às duas séries, Petrobras e IBOVESPA:
+```{r}
+# Petrobras
+resultado_petrobras <- calcular_persistencia(
+  ajuste_garch_petro,
+  ajuste_egarch_petro,
+  ajuste_gjr_petro
+)
+print(resultado_petrobras)
+
+# IBOVESPA
+resultado_ibov <- calcular_persistencia(
+  ajuste_garch_ibov,
+  ajuste_egarch_ibov,
+  ajuste_gjr_ibov
+)
+print(resultado_ibov)
+```
+
+
